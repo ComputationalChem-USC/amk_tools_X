@@ -1124,7 +1124,7 @@ def theor_profile_plotter(G,profile_list,figsize=(10,10),cmap="tab10"):
 	ax.set_frame_on(False)
 	ax.axes.get_xaxis().set_visible(False)
 	ax.get_yaxis().tick_left()
-	ax.axes.grid(b=True,which='both',linestyle='--',c="silver")     
+	ax.axes.grid(visible=True,which='both',linestyle='--',c="silver")     
 
 	# System to keep track of labels that have been already been used in a certain position
 	# Save xpos and name in a dictionary and check before using the label
