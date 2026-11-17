@@ -3,42 +3,42 @@ import bokeh.palettes
 import bokeh.models as bkm
 import bokeh.transform
 import bokeh.layouts
+import bokeh.core.properties
 import argparse
 import sys
 from string import Template
 import RXReader as arx
-from jsmol_to_bokeh import JSMol
+import amk_assets
+import html
+import json
 import networkx as nx
 import numpy as np
 import copy
 
 
-### AutoMeKin visual identity (indigo/coral accents on slate neutrals, matching
-### the AutoMeKin-X documentation site and logo). Edit these to re-theme the
-### generated HTML without touching the plotting/layout logic below.
+### AutoMeKin-X visual identity: white surfaces, black text, blue accents and rules ("plecas").
+### Edit these to re-theme the generated HTML without touching the plotting/layout logic below.
 amk_palette = {
-	"accent": "#4f46e5",          # indigo -- primary accent (links, active controls)
-	"accentHover": "#4338ca",
-	"accentSoft": "rgba(79, 70, 229, 0.10)",
-	"highlight": "#ff8a80",       # coral -- selection / highlighted path
-	"highlightInk": "#b83c30",    # darker coral, for text/labels on light backgrounds
+	"accent": "#1d4ed8",          # blue -- primary accent (rules, links, active controls)
+	"accentHover": "#1e40af",
+	"accentSoft": "rgba(29, 78, 216, 0.08)",
+	"highlight": "#2563eb",       # blue -- selection / highlighted path
+	"highlightInk": "#1d4ed8",    # blue, for TS labels on white
 	"surface": "#ffffff",
 	"surfaceAlt": "#f8fafc",
-	"pageBackground": "#f5f6fa",
-	"border": "#e7e9f2",
-	"textPrimary": "#0f172a",
-	"textSecondary": "#475069",
-	"textMuted": "#8b93ab",
-	"fontDisplay": "'Space Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif",
+	"pageBackground": "#ffffff",
+	"border": "#e2e8f0",
+	"textPrimary": "#0b0f19",     # near-black text
+	"textSecondary": "#334155",
+	"textMuted": "#64748b",
+	"fontDisplay": "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif",
 	"fontBody": "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif",
-	# Sequential ramp (light -> dark indigo) for the energy-mapped node colors,
-	# replacing the default Viridis256 colormap.
-	"nodeEnergyRamp": ["#eeedfb", "#d6d2f5", "#b7affa", "#9689f2", "#7c74ee",
-					   "#4f46e5", "#4338ca", "#372da6", "#2a2277"],
-	# Categorical colors for energy profiles (one per path), used instead of
-	# Bokeh's default d3 Category10 palette.
-	"profileCategorical": ["#4f46e5", "#ff8a80", "#0ca97a", "#e8a53d", "#0891b2",
-						   "#b83c30", "#7c3aed", "#065f46", "#9d174d", "#4338ca"],
+	# Sequential ramp (light -> dark blue) for the energy-mapped node colors
+	"nodeEnergyRamp": ["#eff6ff", "#dbeafe", "#bfdbfe", "#93c5fd", "#60a5fa",
+					   "#3b82f6", "#2563eb", "#1d4ed8", "#1e3a8a"],
+	# Categorical colors for energy profiles (one per path): blues, black and greys
+	"profileCategorical": ["#1d4ed8", "#0b0f19", "#60a5fa", "#1e3a8a", "#64748b",
+						   "#0ea5e9", "#334155", "#93c5fd", "#2563eb", "#94a3b8"],
 }
 
 ### Styling control via dictionary: modify it directly to control font sizes, line widths...
@@ -55,6 +55,271 @@ style_information = {
 	"profileBoxHeight":2,
 	"profileLineWidth":1
 }
+
+### CSS for the generated HTML. Bokeh 3 renders every model inside a shadow DOM, so styles are split:
+### - amk_page_css_template: page shell (light DOM), injected through the HTML template.
+### - amk_widget_css_template: attached to every Bokeh model as an InlineStyleSheet; rules on
+###   :host(.class) style the model itself (css_classes), the rest style its internal elements.
+amk_page_css_template = """
+	body {
+		background: $pageBackground;
+		font-family: $fontBody;
+		color: $textPrimary;
+		margin: 0;
+		border-top: 4px solid $accent;
+	}
+	.amk-shell {
+		max-width: 1440px;
+		margin: 0 auto;
+		padding: 0 24px 40px;
+	}
+	.amk-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 12px;
+		padding: 16px 0 14px;
+		margin-bottom: 14px;
+		border-bottom: 1px solid $border;
+	}
+	.amk-wordmark {
+		font-family: $fontDisplay;
+		font-weight: 800;
+		font-size: 1.5rem;
+		letter-spacing: -0.02em;
+		color: $textPrimary;
+	}
+	.amk-wordmark span {
+		color: $accent;
+	}
+	.amk-brand {
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+	}
+	.amk-product {
+		font-family: $fontDisplay;
+		font-weight: 600;
+		font-size: 1.15rem;
+		color: $textSecondary;
+		padding-left: 10px;
+		border-left: 2px solid $accent;
+	}
+	.amk-logo {
+		height: 56px;
+		width: auto;
+		display: block;
+	}
+	.amk-header-right {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 18px;
+	}
+	.amk-link {
+		font-family: $fontBody;
+		font-size: 0.88rem;
+		font-weight: 600;
+		color: $accent;
+		text-decoration: none;
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 5px 12px 5px 8px;
+		border: 1px solid $border;
+		border-radius: 8px;
+		transition: background-color .15s ease, border-color .15s ease;
+	}
+	.amk-link:hover {
+		background-color: $accentSoft;
+		border-color: $accent;
+	}
+	.amk-context {
+		font-family: $fontBody;
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: $textPrimary;
+		padding-left: 12px;
+		border-left: 3px solid $accent;
+	}
+"""
+
+amk_widget_css_template = """
+	:host {
+		font-family: $fontBody;
+		color: $textPrimary;
+	}
+	.bk-btn.bk-btn-default {
+		font-family: $fontBody;
+		font-size: 0.85rem;
+		font-weight: 600;
+		padding: 7px 14px;
+		background-color: $surface;
+		color: $textPrimary;
+		border: 1px solid $border;
+		border-radius: 8px;
+		cursor: pointer;
+		transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+	}
+	.bk-btn.bk-btn-default:hover:not(:disabled) {
+		border-color: $accent;
+		color: $accent;
+		background-color: $accentSoft;
+	}
+	.bk-btn.bk-btn-default:disabled {
+		color: $textMuted;
+		cursor: default;
+	}
+	.bk-btn.bk-btn-default.bk-active {
+		background-color: $accent;
+		border-color: $accent;
+		color: #ffffff;
+	}
+	.bk-input {
+		font-family: $fontBody;
+		font-size: 0.85rem;
+		padding: 6px 10px;
+		background-color: $surface;
+		color: $textPrimary;
+		border: 1px solid $border;
+		border-radius: 8px;
+	}
+	.bk-input:focus {
+		border-color: $accent;
+		box-shadow: 0 0 0 3px $accentSoft;
+		outline: none;
+	}
+	.bk-checkbox-group label, label {
+		font-size: 0.85rem;
+		color: $textPrimary;
+	}
+	input[type="checkbox"] {
+		accent-color: $accent;
+	}
+	:host(.amk-menu) {
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 10px;
+		padding: 10px 14px;
+		margin-bottom: 18px;
+		background: $surface;
+		border: 1px solid $border;
+		border-left: 4px solid $accent;
+		border-radius: 10px;
+	}
+	:host(.amk-main) {
+		gap: 18px;
+		margin-bottom: 18px;
+	}
+	:host(.amk-card) {
+		background: $surface;
+		border: 1px solid $border;
+		border-top: 3px solid $accent;
+		border-radius: 10px;
+		box-shadow: 0 1px 3px rgba(11, 15, 25, 0.06);
+		padding: 14px 16px;
+		overflow: hidden;
+		gap: 8px;
+	}
+	:host(.amk-card-title) {
+		font-family: $fontDisplay;
+		font-weight: 700;
+		font-size: 1rem;
+		color: $textPrimary;
+		padding-left: 10px;
+		border-left: 4px solid $accent;
+		line-height: 26px;
+	}
+	:host(.amk-mol-name) {
+		margin-left: 16px;
+		color: $accent;
+		font-weight: 600;
+		line-height: 26px;
+	}
+	:host(.amk-controls) {
+		margin-left: auto;
+		align-items: center;
+		gap: 8px;
+	}
+	:host(.amk-field-label) {
+		font-size: 0.85rem;
+		color: $textSecondary;
+	}
+	:host(.amk-legend) {
+		font-family: $fontBody;
+		font-size: 0.82rem;
+		color: $textSecondary;
+	}
+	:host(.amk-schemes) {
+		overflow-y: auto;
+		padding-left: 14px;
+		border-left: 1px solid $border;
+		font-size: 0.85rem;
+	}
+	.amk-schemes-title {
+		font-weight: 700;
+		color: $textPrimary;
+		margin-bottom: 8px;
+	}
+	.amk-scheme-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.amk-scheme-list li {
+		padding: 6px 0;
+		border-bottom: 1px solid $border;
+		line-height: 1.7;
+	}
+	.amk-scheme-num {
+		display: inline-block;
+		min-width: 20px;
+		height: 20px;
+		line-height: 20px;
+		border-radius: 4px;
+		color: #ffffff;
+		text-align: center;
+		font-weight: 700;
+		font-size: 0.75rem;
+		margin-right: 8px;
+	}
+	.amk-scheme-sp {
+		font-weight: 600;
+		color: $textPrimary;
+	}
+	.amk-scheme-ts {
+		color: $accent;
+		font-size: 0.8rem;
+	}
+	.amk-legend-swatch {
+		display: inline-block;
+		width: 16px;
+		height: 3px;
+		background: $highlight;
+		margin-right: 6px;
+		vertical-align: middle;
+	}
+"""
+
+def amk_widget_stylesheet():
+	'''Build the Bokeh InlineStyleSheet carrying the AutoMeKin widget styling (amk_widget_css_template)
+	Output:
+	- bkm.InlineStyleSheet object, to be appended to the stylesheets of every model in a layout'''
+	return bkm.InlineStyleSheet(css=Template(amk_widget_css_template).substitute(amk_palette))
+
+def apply_stylesheet(layout,stylesheet):
+	'''Attach a stylesheet to every UI element (layouts, widgets, plots) referenced by a Bokeh layout,
+	needed since Bokeh 3 isolates every model in its own shadow DOM
+	Input:
+	- layout. Bokeh layout (any UIElement).
+	- stylesheet. bkm.InlineStyleSheet (or any Bokeh StyleSheet) to append.
+	Output:
+	- Modifies the stylesheets property of every UIElement in place'''
+	for model in layout.references():
+		if isinstance(model,bkm.UIElement) and stylesheet not in model.stylesheets:
+			model.stylesheets = list(model.stylesheets) + [stylesheet]
+	return None
 
 # Basic management functions
 
@@ -185,18 +450,61 @@ def generate_applet(width=600,height=600,alt_route=False,jsmol_resources={}):
 		serverURL=serverURL,
 		use="HTML5",
 		j2sPath=j2sPath,
-		script="background white;"
+		script="background white;",
+		disableJ2SLoadMonitor=True,
+		disableInitialConsole=True
 	)
-	# Instantiate a new source
+	# Instantiate a new source: callbacks write a JSMol script to source.data["script"] and
+	# emit source.properties.data.change, which is forwarded to the applet by js_run_script below
 	script_source = bkm.ColumnDataSource({"script":[]})
-	# Build applet
-	applet = JSMol(
-		width=width,
-		height=height,
-		script_source=script_source,
-		info=info_dict,
-		js_url=js_url
-	)
+	# Build applet. Bokeh 3 renders every model inside a shadow DOM, which breaks JSmol (it looks
+	# up its own elements with document.getElementById), so JSmol runs in a same-origin iframe.
+	# The iframe registers window.parent.amkJSmol.run(script) once the applet is ready, which
+	# replaces the old jsmol_to_bokeh extension (Bokeh 2 only) without any compiled extension.
+	applet_doc = Template("""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#ffffff;}</style>
+<script src="$js_url"></script>
+</head><body><div id="amk-jsmol" style="width:100%;height:100%;"></div>
+<script>
+var info = $info;
+delete Jmol._tracker;
+// avoid jsmol.php, which can be problematic (same patch used by jsmol_to_bokeh)
+Jmol.$$ajax = function(ajaxInfo) {
+	Jmol._ajaxCall = ajaxInfo.url;
+	ajaxInfo.cache = (ajaxInfo.cache != "NO");
+	ajaxInfo.url = Jmol._fixProtocol(ajaxInfo.url);
+	var parsedUrl = new URL(ajaxInfo.url, document.baseURI);
+	if (parsedUrl.searchParams.get("query") == null) {
+		ajaxInfo.url = parsedUrl.href;
+	} else {
+		ajaxInfo.url = parsedUrl.searchParams.get("query");
+	}
+	return $$.ajax(ajaxInfo);
+};
+document.getElementById("amk-jsmol").innerHTML = Jmol.getAppletHtml("jmolApplet0", info);
+jmolApplet0._cover(false);
+var host = window.parent;
+host.amkJSmol = {run: function(script) { Jmol.script(jmolApplet0, script); }};
+if (host.amkJSmolPending) {
+	host.amkJSmol.run(host.amkJSmolPending);
+	host.amkJSmolPending = null;
+}
+</script></body></html>""").substitute(js_url=js_url,info=json.dumps(info_dict))
+	iframe = '<iframe srcdoc="%s" style="width:%dpx;height:%dpx;border:0;display:block;" title="JSmol viewer"></iframe>' % (
+		html.escape(applet_doc,quote=True),width,height)
+	applet = bkm.Div(text=iframe,width=width,height=height,name="JSMOL")
+	js_run_script = bkm.CustomJS(args={"source":script_source},code="""
+		var script = source.data["script"][0]
+		if (!script) { return }
+		if (window.amkJSmol) {
+			window.amkJSmol.run(script)
+		} else {
+			// applet still loading: keep the last script, the iframe runs it when ready
+			window.amkJSmolPending = script
+		}
+	""")
+	script_source.js_on_change("data",js_run_script)
 	return info_dict,applet,script_source
 
 def bokeh_network_view(G,positions=None,width=800,height=600,graph_title="Reaction network representation",out_backend="canvas",
@@ -211,13 +519,13 @@ def bokeh_network_view(G,positions=None,width=800,height=600,graph_title="Reacti
 	- graph_title. String, label for the graph.
 	- out_backend. Bokeh backend to be used for the Figure: use "canvas", as "svg" is possible but does not work well
 	Output:
-	- bfig. bokeh.plotting.Figure() object, containing the graph, the corresponding node/edge labels & the basic interactive tools (pan, zoom,
+	- bfig. bokeh.plotting.figure() object, containing the graph, the corresponding node/edge labels & the basic interactive tools (pan, zoom,
 	  reset, hovering...)
 	- Gbok. Bokeh plot generated via from_networkx(),
 	'''
 	
 	# Instantiate figure and graph, setting out basic parameters
-	bfig = bokeh.plotting.Figure(title=graph_title,width=width,height=height,tools="pan,wheel_zoom,box_zoom,reset,save",
+	bfig = bokeh.plotting.figure(title=graph_title,width=width,height=height,tools="pan,wheel_zoom,box_zoom,reset,save",
 				     x_range=bkm.Range1d(-1.2,1.2),y_range=bkm.Range1d(-1.2,1.2),
 								 toolbar_location="above",output_backend=out_backend)
 	bfig.axis.visible = False
@@ -242,9 +550,9 @@ def bokeh_network_view(G,positions=None,width=800,height=600,graph_title="Reacti
 	field_values = nodesource.data[map_field]
 	colormap = bokeh.transform.linear_cmap(field_name=map_field,palette=palette,
 									  low=min(field_values),high=max(field_values))
-	Gbok.node_renderer.glyph = bkm.Circle(size=30,fill_color=colormap,fill_alpha=0.5)
-	Gbok.node_renderer.selection_glyph = bkm.Circle(size=30,fill_color=colormap,fill_alpha=0.8,line_width=2)
-	Gbok.node_renderer.hover_glyph = bkm.Circle(size=30,fill_color=colormap,fill_alpha=0.7,line_color=colormap,
+	Gbok.node_renderer.glyph = bkm.Scatter(marker="circle",size=30,fill_color=colormap,fill_alpha=0.5)
+	Gbok.node_renderer.selection_glyph = bkm.Scatter(marker="circle",size=30,fill_color=colormap,fill_alpha=0.8,line_width=2)
+	Gbok.node_renderer.hover_glyph = bkm.Scatter(marker="circle",size=30,fill_color=colormap,fill_alpha=0.7,line_color=colormap,
 												line_width=2)
 
 	# Legend for the node energy color mapping
@@ -259,7 +567,8 @@ def bokeh_network_view(G,positions=None,width=800,height=600,graph_title="Reacti
 
 	# For edges, only modify selection glyph by now
 	edgesource = Gbok.edge_renderer.data_source
-	Gbok.edge_renderer.hover_glyph = bkm.MultiLine(line_width=2)
+	Gbok.edge_renderer.glyph = bkm.MultiLine(line_width=1.5,line_color=amk_palette["textSecondary"],line_alpha=0.8)
+	Gbok.edge_renderer.hover_glyph = bkm.MultiLine(line_width=2.5,line_color=amk_palette["accent"])
 	Gbok.edge_renderer.selection_glyph = bkm.MultiLine(line_width=3,line_color=amk_palette["highlight"])
 
 	# Add labels according to the positioning object, first for nodes and then for edges
@@ -269,9 +578,9 @@ def bokeh_network_view(G,positions=None,width=800,height=600,graph_title="Reacti
 	posnode_dict = {'xn':xn,'yn':yn,'nnames':nodenames}
 	posnode = bkm.ColumnDataSource(posnode_dict)
 	labels_node = bkm.LabelSet(x='xn', y='yn', text='nnames', text_font_style='bold',
-				   x_offset=0, y_offset=5, source=posnode, render_mode='canvas',
+				   x_offset=0, y_offset=5, source=posnode,
 				   text_font_size=style_information["networkLabelFont"],
-				   text_font=amk_palette["fontBody"],text_color=amk_palette["textPrimary"])
+				   text_font=bokeh.core.properties.value(amk_palette["fontBody"]),text_color=amk_palette["textPrimary"])
 	bfig.add_layout(labels_node)
 
 	# TS labels: fetch central position and name for every edge (skipping barrierless ones)
@@ -286,8 +595,8 @@ def bokeh_network_view(G,positions=None,width=800,height=600,graph_title="Reacti
 			posedge_dict[key].append(output[ik])
 	posedge = bkm.ColumnDataSource(posedge_dict)
 	labels_edge = bkm.LabelSet(x='xe', y='ye', text='enames', text_font_style='bold',text_color=amk_palette["highlightInk"],
-				   x_offset=0, y_offset=0, source=posedge, render_mode='canvas',
-							   text_font_size=style_information["networkLabelFont"],text_font=amk_palette["fontBody"])
+				   x_offset=0, y_offset=0, source=posedge,
+							   text_font_size=style_information["networkLabelFont"],text_font=bokeh.core.properties.value(amk_palette["fontBody"]))
 	bfig.add_layout(labels_edge)
 
 	# Adding tools: hover & tap. To be able to see info about both nodes and edges, we must change the inspection policy
@@ -383,6 +692,28 @@ def profile_datasourcer(G,profile_list):
 		cds_list.append(prof_cds)
 	return cds_list
 
+def reaction_schemes_html(G,profile_list):
+	'''Build an HTML list with the reaction scheme (MIN -TS-> MIN ...) of every energy profile, numbered
+	and colored as the corresponding line in profile_bokeh_plot()
+	Input:
+	- G. nx.Graph object as generated from RXReader.
+	- profile_list. List of lists of strings containing labels defining energy profiles, including TSs (via arx.path_reformatter()).
+	Output:
+	- html_text. String, HTML block to be placed in a bkm.Div'''
+	palette = amk_palette["profileCategorical"]
+	items = []
+	for ii,prof in enumerate(profile_list):
+		color = palette[ii % 10]
+		parts = []
+		for entry in prof:
+			if ("TS" in entry):
+				parts.append("<span class='amk-scheme-ts'>&mdash;%s&rarr;</span>" % html.escape(entry))
+			else:
+				parts.append("<span class='amk-scheme-sp'>%s</span>" % html.escape(entry))
+		items.append("<li><span class='amk-scheme-num' style='background:%s'>%d</span>%s</li>" % (color,ii+1," ".join(parts)))
+	html_text = "<div class='amk-schemes-title'>Reaction schemes</div><ol class='amk-scheme-list'>%s</ol>" % "".join(items)
+	return html_text
+
 def profile_bokeh_plot(G,profile_list,condition=[],width=600,height=600,out_backend="canvas"):
 	'''Generate a Bokeh figure for energy profiles, using profile_datasourcer() to transform the profile list to a 
 	ColumnDataSource list.
@@ -394,7 +725,7 @@ def profile_bokeh_plot(G,profile_list,condition=[],width=600,height=600,out_back
 	- bfig. Bokeh figure containing line plots & labels for every profile in profile_list
 	'''
 	# Initialization: instantiate figure, remove X-axis and add palette
-	bfig = bokeh.plotting.Figure(width=width,height=height,tools="pan,wheel_zoom,box_zoom,reset,save",name="PROFILE",
+	bfig = bokeh.plotting.figure(width=width,height=height,tools="pan,wheel_zoom,box_zoom,reset,save",name="PROFILE",
 								 min_border_left=int(width/10),output_backend=out_backend)
 	bfig.xaxis.visible = False
 	bfig.yaxis.axis_label = "E (kcal/mol)"
@@ -434,13 +765,13 @@ def profile_bokeh_plot(G,profile_list,condition=[],width=600,height=600,out_back
 		cds_lab_textlab = bkm.ColumnDataSource(copy.deepcopy(cds_lab.data))
 		rx_label = bkm.LabelSet(x="x",y="y",text="lab",source=cds_lab_textlab,x_offset=style_information["profileLabelXOffset"],y_offset=style_information["profileLabelYOffset"],
 								name="THELABELS",text_font_size=style_information["profileLabelFont"],
-								text_font=amk_palette["fontBody"],text_color=amk_palette["textPrimary"],text_font_style="bold")
+								text_font=bokeh.core.properties.value(amk_palette["fontBody"]),text_color=amk_palette["textPrimary"],text_font_style="bold")
 		bfig.add_layout(rx_label)
 		cds_lab_elab = bkm.ColumnDataSource(copy.deepcopy(cds_lab.data))
 		energy_label = bkm.LabelSet(x="x",y="y",text="elab",source=cds_lab_elab,x_offset=style_information["profileLabelXOffset"],
 									y_offset=style_information["profileELabelYOffset"],name="ENERGYLABELS",
 									text_font_size=style_information["profileLabelFont"],
-									text_font=amk_palette["fontBody"],text_color=amk_palette["textPrimary"])
+									text_font=bokeh.core.properties.value(amk_palette["fontBody"]),text_color=amk_palette["textPrimary"])
 		bfig.add_layout(energy_label)
 		### Add filtering: hide when filter condition is not fulfilled
 		rx_line.visible = condition[ii]
@@ -639,41 +970,13 @@ js_callback_dict = {
 
 		"chooseVibrationMenu":"""
 		// source - source object for JSMol ; menu - dropdown menu object
-		source.data["script"] = [source.data["current_model"] + "; vibration on ; vibration scale 0.25 ; model " + this.item]
-		var ndx = parseInt(this.item) - 1
+		source.data["script"] = [source.data["current_model"] + "; vibration on ; vibration scale 0.25 ; model " + cb_obj.item]
+		var ndx = parseInt(cb_obj.item) - 1
 		var molname = source.data["current_mol"]
 		var frqval = menu.menu[ndx][0]
 		source.data["current_vibration"] = frqval
 		textField.text = "<font size=+1><b>" + molname + " (" + frqval.trim() + ")" + "</b></font>"
 		source.properties.data.change.emit()
-		""",
-
-    		"replacePlot":"""
-		//layout - full layout, jsmol - jsmol app (where the profile window will appear), prof - profile
-		//mol_view - boolean for current view
-		var current_fig = layout.children[1][0].children
-		var name_elem = current_fig[0]
-		var jsmol_plot = current_fig[1]
-		var prof_plot = current_fig[2]
-		var control_elem = current_fig[3]
-
-		// allow to enable and disable corresponding profile control buttons
-		var bfilt1 = control_elem.children[1] 
-		var bfilt2 = control_elem.children[3]
-		if (mol_view[0] == true){
-			jsmol.visible = true
-			prof.visible = false
-			bfilt1.disabled = true
-			bfilt2.disabled = true
-			mol_view[0] = false
-		} else {
-			jsmol.visible = false
-			prof.visible = true
-			bfilt1.disabled = false
-			bfilt2.disabled = false
-			mol_view[0] = true
-		}
-
 		""",
 
 		"selectProfileByMol":"""
@@ -911,24 +1214,27 @@ def full_view_layout(bokeh_figure,bokeh_graph,G=None,alt_jsmol=False,jsmol_resou
 	# Add access to data sources for nodes and edges
 	nodesource = bokeh_graph.node_renderer.data_source
 	edgesource = bokeh_graph.edge_renderer.data_source
-	# Instantiate the applet
-	info,app,script_source = generate_applet(width=w2,height=h,alt_route=alt_jsmol,jsmol_resources=jsmol_resources)
+	# Instantiate the applet: the viewer card stacks a title row (26 px) and the applet, while the
+	# network card stacks its title (26), the figure (h) and the legend (24), plus gaps: match both cards
+	h_view = h + 32
+	# energy profiles go below both cards, using the full width (two cards + card padding/margins)
+	w_prof = w1 + w2 + 72
+	h_prof = int(h*0.75)
+	info,app,script_source = generate_applet(width=w2,height=h_view,alt_route=alt_jsmol,jsmol_resources=jsmol_resources)
 
 	# Instantiate the required widgets: buttons, text inputs, menus...
 	
-	b1 = bkm.Button(label="Load vibrations",max_width=int(w1/4),css_classes=['xspecial'],align="center") 
-	b2 = bkm.Button(label="To clipboard",max_width=int(w1/4),css_classes=['xtest'],align="center")
-	text_input = bkm.TextInput(value=nodesource.data["name"][0],max_width=int(w1/4),align="center")
-	b3 = bkm.Button(label="Locate molecule",max_width=2*int(w1/4),align="center")
-	cb_isol = bkm.CheckboxGroup(labels=["Isolate selection"],max_width=int(w1/4),align="center")
-	menu = bkm.Dropdown(label="Normal modes",menu=[("No vibr. loaded","None"),None],disabled=True,max_width=2*int(w1/4),align="center")
-	spc1 = bkm.Spacer(width=int(w2/2),align="center")
-	text = bkm.Div(text="(Click an element)",height=hw,align="center")
+	b1 = bkm.Button(label="Load vibrations",align="center") 
+	b2 = bkm.Button(label="Copy XYZ",align="center")
+	text_input = bkm.TextInput(value=nodesource.data["name"][0],width=160,align="center",placeholder="MIN1, TS3, PR2...")
+	b3 = bkm.Button(label="Locate",align="center")
+	cb_isol = bkm.CheckboxGroup(labels=["Isolate selection"],align="center")
+	menu = bkm.Dropdown(label="Normal modes",menu=[("No vibr. loaded","None"),None],disabled=True,align="center")
+	text = bkm.Div(text="(Click an element)",align="center")
 	# For profile-based elements
-	b4 = bkm.Button(label="Molec. filter",max_width=int(w2/5),align="center",disabled=True)
-	cbox = bkm.CheckboxGroup(labels=["Show profile"],max_width=int(w2/5),max_height=int(h/6),align="center")
-	b5 = bkm.Button(label="Energy filter",max_width=int(w2/5),align="center",disabled=True)
-	thrbox = bkm.TextInput(value="%.2f" % max(edgesource.data["energy"]),width=2*int(w2/5),align="center")
+	b4 = bkm.Button(label="Filter by selected species",align="center",disabled=True)
+	b5 = bkm.Button(label="Filter by energy",align="center",disabled=True)
+	thrbox = bkm.TextInput(value="%.2f" % max(edgesource.data["energy"]),width=110,align="center")
 	# Write the JavaScript callback to allow to avoid the Bokeh server: all is ported to JavaScript
 	# For this to work, we need to pre-load all models in the graph
 	js_load_mol = bkm.CustomJS(args = {"graph":bokeh_graph,"source":script_source,"textField":text}, 
@@ -975,41 +1281,35 @@ def full_view_layout(bokeh_figure,bokeh_graph,G=None,alt_jsmol=False,jsmol_resou
 	# Vibration selector
 	menu.js_on_event("menu_item_click",js_menu_selector)
 	
-	# New layout: a single toolbar row (all molecule/vibration/selection controls) above
-	# a two-column grid: left = network view card, right = molecule name, JSMol/profile view
-	# and profile controls
-	# |    	Load vibr. | Modes | Clipboard | Locate: [text] [Go] | Isolate selection    	|
-	# | 	Network visualization		 ||	  	Mol. info 			|
-	# | 						 ||		JSMol // Profile		|
-	# | 						 ||		Profile options 		|
+	# Layout (AutoMeKin-X dashboard):
+	# | MENU: Load vibr. | Modes | Clipboard | [text] Locate | Isolate selection          |
+	# | Molecule viewer (JSMol)          || Reaction network                               |
+	# | Energy profiles + filters (full width, only when paths were requested)            |
 
-	toolbar = bkm.Row(b1,menu,b2,text_input,b3,cb_isol,height=hw,css_classes=['amk-toolbar'])
+	menu_bar = bkm.Row(b1,menu,b2,text_input,b3,cb_isol,css_classes=['amk-menu'],sizing_mode="stretch_width")
 
-	legend = bkm.Div(text="<span class='amk-legend-swatch'></span> selected / highlighted route",
-					 css_classes=['amk-legend'],height=int(hw/2))
-	# A real Bokeh Div (not a CSS ::before) for the network card title: Bokeh's own
-	# figure renders into an opaque <canvas> that paints OVER any CSS pseudo-element
-	# placed behind it, so the title has to be an actual widget taking up real space
-	# in the layout instead.
+	# Viewer card (left): title + currently loaded molecule, then the JSMol applet
+	viewer_title = bkm.Div(text="Molecule viewer",css_classes=['amk-card-title'],height=26)
+	text.css_classes = ['amk-mol-name']
+	text.height = 26
+	col_viewer = bkm.Column(bkm.Row(viewer_title,text),app,css_classes=['amk-card','amk-card-viewer'])
+
+	# Network card (right). A real Bokeh Div is used for the title (Bokeh figures render into a canvas)
 	network_title = bkm.Div(text="Reaction network",css_classes=['amk-card-title'],height=26)
-	col1 = bkm.Column(network_title,bokeh_figure,legend,width=w1,
-					  css_classes=['amk-card','amk-card-network'])
-	col2 = bkm.Column(bkm.Row(spc1,text,height=hw),bkm.Row(app),width=w2,
-					  css_classes=['amk-card','amk-card-viewer'])
-	grid = bokeh.layouts.grid([col1,col2],ncols=2)
-	layout = grid
+	legend = bkm.Div(text="<span class='amk-legend-swatch'></span> selected / highlighted route",
+					 css_classes=['amk-legend'],height=24)
+	col_network = bkm.Column(network_title,bokeh_figure,legend,css_classes=['amk-card','amk-card-network'])
 
-	# Add the options to see profiles if G was passed to the function and contains a pathList property
+	layout = bkm.Row(col_viewer,col_network,css_classes=['amk-main'])
+	rows = [menu_bar,layout]
+
+	# Energy profiles (bottom) if G was passed to the function and contains a pathList property
 	if (G and "pathList" in G.graph):
-		# Define elements (checkbox & button) and append them to the column containing the JSMol widget
-		# Then instantiate figure and prepare callbacks
-		mol_view = [False]
-		control_row = bkm.Row(cbox,b4,thrbox,b5,height=int(h/6),height_policy="max")
-
-		fig_prof = profile_bokeh_plot(G,G.graph["pathList"],width=w2,height=h)
-		js_plot_modif = bkm.CustomJS(args = {"layout":layout,"prof":fig_prof,"jsmol":app,"mol_view":mol_view}, 
-									 code = js_callback_dict["replacePlot"])
-		cbox.js_on_click(js_plot_modif)
+		b4.disabled = False
+		b5.disabled = False
+		# the profile plot shares the bottom card with the reaction schemes list (w_scheme px)
+		w_scheme = 320
+		fig_prof = profile_bokeh_plot(G,G.graph["pathList"],width=w_prof-w_scheme-20,height=h_prof)
 		js_select_profile_mol = bkm.CustomJS(args = {"graph":bokeh_graph,"prof":fig_prof}, 
 											 code = js_callback_dict["selectProfileByMol"])
 		b4.js_on_click(js_select_profile_mol)
@@ -1027,12 +1327,20 @@ def full_view_layout(bokeh_figure,bokeh_graph,G=None,alt_jsmol=False,jsmol_resou
 		iconE[1:-1,1,:] = 200
 		elabel_action = bkm.CustomAction(icon=iconE,callback=js_show_elabels,description="Show energy labels")
 		fig_prof.add_tools(elabel_action)
-		
-		# add all to layout, with profile plot hidden at the start
-		fig_prof.visible = False
-		layout.children[1][0].children.append(fig_prof)
-		layout.children[1][0].children.append(control_row)
-	full_layout = bkm.Column(toolbar,layout,css_classes=['amk-page'])
+
+		profile_title = bkm.Div(text="Energy profiles",css_classes=['amk-card-title'],height=26)
+		thr_label = bkm.Div(text="Max. energy (kcal/mol)",css_classes=['amk-field-label'],align="center")
+		b6 = bkm.Button(label="Show all",align="center")
+		b6.js_on_click(bkm.CustomJS(args={"prof":fig_prof},code=js_callback_dict["resetProfile"]))
+		control_row = bkm.Row(b4,thr_label,thrbox,b5,b6,css_classes=['amk-controls'])
+		schemes = bkm.Div(text=reaction_schemes_html(G,G.graph["pathList"]),width=w_scheme,height=h_prof,
+						  css_classes=['amk-schemes'])
+		col_profile = bkm.Column(bkm.Row(profile_title,control_row),bkm.Row(fig_prof,schemes),
+								 css_classes=['amk-card','amk-card-profile'])
+		rows.append(col_profile)
+
+	full_layout = bkm.Column(*rows,css_classes=['amk-page'])
+	apply_stylesheet(full_layout,amk_widget_stylesheet())
 	return full_layout
 
 
@@ -1064,7 +1372,7 @@ def generate_visualization(G,finaldir,title,outfile,Nvibrations=-1,with_profiles
 	# pixel boxes that know nothing about that CSS padding, so the inner
 	# figure/applet size is shrunk here to actually fit inside the card
 	# instead of overflowing past its rounded corners.
-	CARD_INSET_W = 36
+	CARD_INSET_W = 48
 	CARD_INSET_H = 60
 	w1 = int(size[0]*4/7) - CARD_INSET_W
 	w2 = int(size[0]*3/7) - CARD_INSET_W
@@ -1073,167 +1381,21 @@ def generate_visualization(G,finaldir,title,outfile,Nvibrations=-1,with_profiles
 
 	sizing_dict = {'w1':w1,'w2':w2,'wu':wu,'h':h}
 
-	### Define custom classes
-	### The AutoMeKin visual identity (see amk_palette at the top of this module) is
-	### injected here as plain CSS. string.Template ($name substitution) is used instead
-	### of str.format()/f-strings so that CSS's own curly braces -- and the Jinja2
-	### {% block %} / {{ }} syntax used by Bokeh's HTML template -- never collide with
-	### Python's string formatting syntax.
-	amk_style_css = Template("""
-	body {
-		background: $pageBackground;
-		font-family: $fontBody;
-		color: $textPrimary;
-	}
-	.bk-root, .bk-root .bk {
-		font-family: $fontBody;
-		font-size: 1.2vh;
-	}
-	.bk-root .bk-btn-default {
-		font-family: $fontBody;
-		font-size: 1.2vh;
-		font-weight: 600;
-		padding: 7px 16px;
-		background-color: $surface;
-		color: $textSecondary;
-		border: 1px solid $border;
-		border-radius: 999px;
-		cursor: pointer;
-		transition: background-color .15s ease, color .15s ease, border-color .15s ease, transform .15s ease;
-	}
-	.bk-root .bk-btn-default:hover {
-		border-color: $accent;
-		color: $accent;
-		transform: translateY(-1px);
-	}
-	.bk-root .bk-btn-default.bk-active {
-		background-color: $accent;
-		border-color: $accent;
-		color: #ffffff;
-	}
-	.bk-root .bk-btn-default.bk-active:hover {
-		background-color: $accentHover;
-		color: #ffffff;
-	}
-	.bk-root .bk-input {
-		font-family: $fontBody;
-		font-size: 1.2vh;
-		padding-bottom: 5px;
-		padding-top: 5px;
-		background-color: $surface;
-		color: $textPrimary;
-		border: 1px solid $border;
-		border-radius: 8px;
-	}
-	.bk-root .bk-input:focus {
-		border-color: $accent;
-		outline: none;
-	}
-	.bk-root .bk-clearfix{
-		padding-bottom: 0.8vh;
-	}
-	.bk-root .bk-toolbar-button:hover,
-	.bk-root .bk-toolbar-button.bk-active {
-		color: $accent;
-	}
-	.amk-shell {
-		max-width: 1400px;
-		margin: 0 auto;
-		padding: 24px 20px 40px;
-	}
-	.amk-header {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		flex-wrap: wrap;
-		gap: 10px;
-		margin-bottom: 18px;
-	}
-	.amk-wordmark {
-		font-family: $fontDisplay;
-		font-weight: 700;
-		font-size: 1.7rem;
-		letter-spacing: -0.01em;
-		color: $textPrimary;
-		padding-bottom: 4px;
-		border-bottom: 3px solid $accent;
-	}
-	.amk-wordmark span {
-		color: $accent;
-	}
-	.amk-context {
-		font-family: $fontBody;
-		font-size: 0.92rem;
-		color: $textSecondary;
-		font-variant-numeric: tabular-nums;
-	}
-	.amk-card {
-		background: $surface !important;
-		border: 1px solid $border;
-		border-radius: 14px !important;
-		box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
-		/* NOTE: Bokeh's own JS layout engine positions each LayoutDOM child with
-		   an explicit inline 'top/left' computed with NO knowledge of CSS padding
-		   (absolute positioning is relative to the padding EDGE, i.e. the
-		   border-inner edge -- padding does not inset it). This padding therefore
-		   only shows up as leftover space on the bottom/right of the card, not as
-		   a true inset on all sides; real spacing for Bokeh content must come from
-		   each widget's own 'height'/'margin' Python properties instead. */
-		padding: 14px 16px !important;
-		margin: 0 9px 18px !important;
-		overflow: hidden;
-	}
-	.amk-card-title {
-		font-family: $fontDisplay;
-		font-weight: 600;
-		font-size: 1.05rem;
-		color: $textPrimary;
-	}
-	.amk-card-viewer::before {
-		display: block;
-		position: absolute;
-		top: 16px;
-		left: 20px;
-		font-family: $fontDisplay;
-		font-weight: 600;
-		font-size: 1.05rem;
-		color: $textPrimary;
-		content: "Molecule viewer";
-	}
-	.amk-toolbar {
-		display: flex !important;
-		flex-wrap: wrap;
-		gap: 8px;
-		align-items: center;
-		margin: 0 9px 18px;
-	}
-	.amk-page {
-		display: flex;
-		flex-direction: column;
-	}
-	.amk-legend {
-		font-family: $fontBody;
-		font-size: 0.82rem;
-		color: $textSecondary;
-		margin: 6px 4px 0;
-	}
-	.amk-legend-swatch {
-		display: inline-block;
-		width: 14px;
-		height: 4px;
-		border-radius: 2px;
-		background: $highlight;
-		margin-right: 6px;
-	}
-	""").substitute(amk_palette)
+	### Page-level styling (AutoMeKin visual identity, see amk_palette at the top of this module).
+	### Only the page shell (header, background) lives in the light DOM and is styled here: since
+	### Bokeh 3, every widget/plot renders inside its own shadow DOM, so their styles are attached
+	### to each model through amk_widget_stylesheet() instead (see full_view_layout()).
+	### string.Template ($name substitution) is used instead of str.format()/f-strings so that CSS's
+	### own curly braces -- and the Jinja2 {% block %} / {{ }} syntax used by Bokeh's HTML
+	### template -- never collide with Python's string formatting syntax.
+	amk_style_css = Template(amk_page_css_template).substitute(amk_palette)
 
 	style_template = """
 	{% block postamble %}
 
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-	<script type="text/javascript" src="https://cdn.jsdelivr.net/gh/dgarayr/jsmol_to_bokeh/jsmol_to_bokeh.min.js"></script>
+	<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 	<style>
 	""" + amk_style_css + """
 	</style>
@@ -1242,13 +1404,23 @@ def generate_visualization(G,finaldir,title,outfile,Nvibrations=-1,with_profiles
 	{% block contents %}
 	<div class="amk-shell">
 	  <header class="amk-header">
-	    <div class="amk-wordmark">Auto<span>MeKin</span></div>
-	    <div class="amk-context">{{ title }}</div>
+	    <div class="amk-brand">
+	      <span class="amk-wordmark">Auto<span>MeKin</span>-X</span>
+	      <span class="amk-product">RXNet Visualizer</span>
+	    </div>
+	    <div class="amk-header-right">
+	      <div class="amk-context">{{ title }}</div>
+	      <a class="amk-link" href="__AMKX_URL__" target="_blank" rel="noopener" title="Official AutoMeKin-X repository">
+	        <img class="amk-logo" src="data:image/png;base64,__AMK_LOGO__" alt="AutoMeKin logo">
+	        <span>on GitHub &#8599;</span>
+	      </a>
+	    </div>
 	  </header>
 	  """ + "{{ super() }}" + """
 	</div>
 	{% endblock %}
 	"""
+	style_template = style_template.replace("__AMKX_URL__",amk_assets.AMKX_URL).replace("__AMK_LOGO__",amk_assets.LOGO_PNG_B64)
 	posx = layout_function(G)
 	# Add model field to all nodes and edges & also vibrations
 	add_models(G)
