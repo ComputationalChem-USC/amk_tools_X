@@ -31,11 +31,16 @@ The simplest way to generate a dashboard from AutoMeKin	results is to call the `
 If more control is desired, the user should use a custom Python script.
 
 ## Dependencies
-+ NetworkX 
-+ Bokeh 2.x (>= 2.3.2, < 3.0.0)
-+ jsmol_bokeh_extension
-+ NodeJS (>= 14.0.0)
+Aligned with the environment installed by [AutoMeKin-X](https://github.com/ComputationalChem-USC/AutoMeKin-X) (Python 3.11, numpy 2.x):
+
++ Python >= 3.10
++ NetworkX >= 3.0
++ Bokeh 3.x (>= 3.4, < 4.0; 3.9 is the last series supporting Python 3.10/3.11)
++ numpy (1.24 or newer, numpy 2.x supported)
++ scipy
 + matplotlib
+
+The JSmol molecular viewer is embedded directly in the dashboard, so the *jsmol_bokeh_extension* package and NodeJS are no longer needed. JSmol itself is loaded from a CDN when the HTML file is opened.
 
 ## Installation instructions
 A basic installer from setuptools, `setup.py` is provided. Inside the main folder, run:
@@ -46,4 +51,4 @@ pip install -e .
 
 to install the package in *editable* mode: thus, all changes in the **py** files of the modules RXReader and RXVisualizer will be directly applied to the calculations where the modules are used.
 
-Bokeh 3.x is not currently supported due to changes in the API.
+Bokeh 2.x is no longer supported: it does not work with numpy 2, which AutoMeKin-X installs.

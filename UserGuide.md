@@ -129,12 +129,14 @@ While this one creates the corresponding plots for the paths that connect MIN1 w
 `$amk_gen_view.py FINAL_LL_FA RXNet.cg --paths MIN1 H2+CO2`
 
 ## Dependencies
-+ NetworkX 
-+ Bokeh (>= 2.3.2)
-+ jsmol\_bokeh\_extension
-+ NodeJS (>= 14.0.0)
++ Python >= 3.10
++ NetworkX >= 3.0
++ Bokeh 3.x (>= 3.4, < 4.0)
 + matplotlib
-+ numpy 
++ numpy (numpy 2.x supported)
++ scipy
 + sqlite3
+
+The JSmol viewer is embedded in the HTML directly: *jsmol\_bokeh\_extension* and NodeJS are no longer required.
 
 

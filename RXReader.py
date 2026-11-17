@@ -56,7 +56,7 @@ def molden_vibration_parser(moldenfile):
 	# Check whether default filename exists, either try to check if alternative FILEprog_XXXX.molden exists
 	file_flag = os.path.exists(moldenfile)
 	if (not file_flag):
-		code = re.sub("\D+","",moldenfile)
+		code = re.sub(r"\D+","",moldenfile)
 		tag = re.sub("[0-9].*","",moldenfile)
 		g09_name = tag + "g09_" + code + ".molden"
 		mopac_name = tag + "mop_" + code + ".molden"
