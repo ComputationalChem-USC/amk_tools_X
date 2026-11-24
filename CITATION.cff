@@ -2,5 +2,7 @@ cff-version: 1.2.0
 authors:
 - family-names: "Garay-Ruiz"
   given-names: "Diego"
-title: "amk_tools"
-url: "https://github.com/dgarayr/amk_tools"
+- family-names: "Rodriguez-Lopez"
+  given-names: "Omar"
+title: "amk_tools_X"
+repository-code: "https://github.com/ComputationalChem-USC/amk_tools_X"
